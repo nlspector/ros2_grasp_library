@@ -69,7 +69,7 @@ Visualization Manager:
       Size (Pixels): 3
       Size (m): 0.009999999776482582
       Style: Points
-      Topic: /camera/pointcloud
+      Topic: /camera/camera/depth/color/points
       Unreliable: false
       Use Fixed Frame: true
       Use rainbow: true

@@ -35,9 +35,12 @@
 #include <Eigen/Geometry>
 
 // GPG
-#include <gpg/cloud_camera.h>
+#include <gpd/util/cloud.h>
 
-// this project (messages)
+// GPD
+#include <gpd/candidate/hand.h>
+#include <gpd/candidate/hand_geometry.h>
+#include <gpd/candidate/hand_search.h>
 #include <gpd/grasp_detector.h>
 #include <grasp_msgs/msg/grasp_config.hpp>
 #include <grasp_msgs/msg/grasp_config_list.hpp>
@@ -73,7 +76,11 @@ public:
   /**
    * \brief Constructor.
   */
-  explicit GraspDetectorGPD(const rclcpp::NodeOptions & options);
+  // Constructor with config file
+  explicit GraspDetectorGPD(const std::string& config_file, const rclcpp::NodeOptions & options = rclcpp::NodeOptions());
+  
+  // Constructor with just node options (for component loading)
+  explicit GraspDetectorGPD(const rclcpp::NodeOptions & options = rclcpp::NodeOptions());
 
   /**
    * \brief Destructor.
@@ -95,7 +102,7 @@ private:
    * \brief Detect grasp poses in a point cloud received from a ROS topic.
    * \return the list of grasp poses
    */
-  std::vector<Grasp> detectGraspPosesInTopic();
+  std::vector<std::unique_ptr<gpd::candidate::Hand>> detectGraspPosesInTopic();
 
   /**
    * \brief Callback function for the ROS topic that contains the input point cloud.
@@ -114,20 +121,29 @@ private:
    * \param hands the list of grasps
    * \return the ROS message that contains the grasp poses
    */
-  grasp_msgs::msg::GraspConfigList createGraspListMsg(const std::vector<Grasp> & hands);
+  grasp_msgs::msg::GraspConfigList createGraspListMsg(const std::vector<std::unique_ptr<gpd::candidate::Hand>> & hands);
+  
+  // Backward compatibility method for GPG style grasps
+  grasp_msgs::msg::GraspConfigList createGraspListMsg(const std::vector<gpd::candidate::Hand> & hands);
 
   /**
    * \brief Convert GPD Grasp into grasp message.
    * \param hand A GPD grasp
    * \return The Grasp message converted
    */
-  grasp_msgs::msg::GraspConfig convertToGraspMsg(const Grasp & hand);
+  grasp_msgs::msg::GraspConfig convertToGraspMsg(const gpd::candidate::Hand & hand);
 
   /**
    * \brief Convert GPD Grasps into visual grasp messages.
    */
   visualization_msgs::msg::MarkerArray convertToVisualGraspMsg(
-    const std::vector<Grasp> & hands,
+    const std::vector<std::unique_ptr<gpd::candidate::Hand>> & hands,
+    double outer_diameter, double hand_depth, double finger_width, double hand_height,
+    const std::string & frame_id);
+    
+  // Backward compatibility method for GPG style grasps
+  visualization_msgs::msg::MarkerArray convertToVisualGraspMsg(
+    const std::vector<gpd::candidate::Hand> & hands,
     double outer_diameter, double hand_depth, double finger_width, double hand_height,
     const std::string & frame_id);
 
@@ -164,9 +180,15 @@ private:
     m.z = e(2);
   }
 
+  /**
+   * \brief Initialize ROS components such as publishers, subscribers, etc.
+   */
+  void initializeROSComponents();
+
   Eigen::Vector3d view_point_; /**< (input) view point of the camera onto the point cloud*/
+  /** individual parameters for grasp detection */
   /** stores point cloud with (optional) camera information and surface normals*/
-  CloudCamera * cloud_camera_;
+  gpd::util::Cloud * cloud_camera_;
   std_msgs::msg::Header cloud_camera_header_; /**< stores header of the point cloud*/
   /** status variables for received (input) messages*/
   bool has_cloud_;
@@ -179,8 +201,8 @@ private:
 #endif
   std::vector<double> grasp_ws_;
 
-  rclcpp::callback_group::CallbackGroup::SharedPtr callback_group_subscriber1_;
-  rclcpp::callback_group::CallbackGroup::SharedPtr callback_group_subscriber2_;
+  rclcpp::CallbackGroup::SharedPtr callback_group_subscriber1_;
+  rclcpp::CallbackGroup::SharedPtr callback_group_subscriber2_;
   /** ROS2 subscriber for point cloud messages*/
   rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr cloud_sub_;
 #ifdef RECOGNIZE_PICK
@@ -194,10 +216,17 @@ private:
   /** ROS2 publisher for grasps in rviz (visualization)*/
   rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr grasps_rviz_pub_;
 
-  std::shared_ptr<GraspDetector> grasp_detector_; /**< used to run the grasp pose detection*/
-  GraspDetector::GraspDetectionParameters detection_param_; /**< grasp detector parameters*/
+  std::unique_ptr<gpd::GraspDetector> grasp_detector_; /**< used to run the grasp pose detection*/
+  gpd::candidate::HandGeometry hand_geometry_; /**< hand geometry parameters */
+  std::string config_file_; /**< path to the GPD config file */
   rclcpp::Logger logger_ = rclcpp::get_logger("GraspDetectorGPD");
   std::thread * detector_thread_; /**< thread for grasp detection*/
+  
+  /**
+   * \brief Check if the detector is properly initialized
+   * \return true if detector is valid, false otherwise
+   */
+  bool isDetectorValid() const;
 };
 
 }  // namespace grasp_ros2

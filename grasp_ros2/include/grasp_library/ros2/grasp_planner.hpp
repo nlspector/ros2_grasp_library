@@ -20,7 +20,9 @@
 #include <grasp_msgs/msg/grasp_config_list.hpp>
 #include <moveit_msgs/msg/grasp.h>
 #include <moveit_msgs/srv/grasp_planning.hpp>
-#include <tf2_geometry_msgs/tf2_geometry_msgs.h>
+#include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
+#include <tf2_msgs/msg/tf_message.hpp>
+#include <tf2_ros/buffer.h>
 #include <tf2_ros/transform_listener.h>
 #include <tf2_ros/static_transform_broadcaster.h>
 #include <trajectory_msgs/msg/joint_trajectory_point.hpp>
@@ -34,7 +36,12 @@
 #include <utility>
 #include <vector>
 
+#include <gpd/grasp_detector.h>
 #include "grasp_library/ros2/grasp_detector_base.hpp"
+
+namespace gpd {
+  class GraspDetector;
+}
 
 namespace grasp_ros2
 {
@@ -95,7 +102,7 @@ public:
   */
   ~GraspPlanner()
   {
-    delete tfBuffer_;
+    // No need to delete tfBuffer_ as it's now a shared_ptr
   }
 
   void grasp_callback(const grasp_msgs::msg::GraspConfigList::SharedPtr msg);
@@ -151,9 +158,9 @@ private:
   rclcpp::Logger logger_ = rclcpp::get_logger("GraspPlanner");
   /*buffer for grasps to be returned from this service*/
   std::vector<moveit_msgs::msg::Grasp> moveit_grasps_;
-  rclcpp::callback_group::CallbackGroup::SharedPtr callback_group_subscriber3_;
+  rclcpp::CallbackGroup::SharedPtr callback_group_subscriber3_;
   rclcpp::Service<moveit_msgs::srv::GraspPlanning>::SharedPtr grasp_srv_; /*grasp service*/
-  tf2_ros::Buffer * tfBuffer_; /*buffer for transformation listener*/
+  std::shared_ptr<tf2_ros::Buffer> tfBuffer_; /*buffer for transformation listener*/
   std::shared_ptr<tf2_ros::TransformListener> tfListener_; /*Transform listener*/
   tf2_ros::StaticTransformBroadcaster tfBroadcaster_; /*grasp pose transformation broadcaster*/
   GraspDetectorBase * grasp_detector_; /*grasp detector node*/

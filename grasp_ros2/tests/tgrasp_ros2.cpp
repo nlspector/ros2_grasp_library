@@ -102,7 +102,7 @@ int main(int argc, char * argv[])
   RCLCPP_INFO(node->get_logger(), "Request sent");
 
   if (rclcpp::spin_until_future_complete(node, result_future) !=
-    rclcpp::executor::FutureReturnCode::SUCCESS)
+    rclcpp::FutureReturnCode::SUCCESS)
   {
     RCLCPP_ERROR(node->get_logger(), "Request failed");
     return 1;

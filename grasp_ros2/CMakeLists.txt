@@ -40,12 +40,11 @@ find_package(rclcpp_components REQUIRED)
 find_package(grasp_msgs REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(moveit_msgs)
-if(BUILD_RECOGNIZE_PICK STREQUAL "ON")
-find_package(people_msgs)
-endif()
+# find_package(people_msgs REQUIRED)
 find_package(visualization_msgs)
-find_package(tf2)
+find_package(tf2 REQUIRED)
 find_package(tf2_ros REQUIRED)
+find_package(tf2_msgs REQUIRED)
 find_package(tf2_geometry_msgs REQUIRED)
 find_package(trajectory_msgs REQUIRED)
 find_package(pcl_conversions REQUIRED)
@@ -55,15 +54,23 @@ find_package(Eigen3 REQUIRED)
 find_library(gpg_LIBRARIES grasp_candidates_generator)
 find_path(gpg_INCLUDE_DIRS gpg/grasp.h)
 # GPD
-find_library(gpd_LIBRARIES grasp_pose_detection)
+find_library(gpd_LIBRARIES gpd)
 find_path(gpd_INCLUDE_DIRS gpd/grasp_detector.h)
 
 # PCL
-find_package(PCL 1.8.1 EXACT)
+find_package(PCL 1.14 REQUIRED)
 include_directories(${PCL_INCLUDE_DIRS})
 link_directories(${PCL_LIBRARY_DIRS})
 add_definitions(${PCL_DEFINITIONS})
 
+# OpenCV
+find_package(OpenCV REQUIRED)
+include_directories(${OpenCV_INCLUDE_DIRS})
+
+# VTK (explicit inclusion)
+find_package(VTK 9.1 REQUIRED)
+include_directories(${VTK_INCLUDE_DIRS})
+include_directories(/usr/include/vtk-9.1)
 include_directories(
   include
   ${rclcpp_INCLUDE_DIRS}
@@ -71,10 +78,8 @@ include_directories(
   ${grasp_msgs_INCLUDE_DIRS}
   ${sensor_msgs_INCLUDE_DIRS}
   ${moveit_msgs_INCLUDE_DIRS}
-if(BUILD_RECOGNIZE_PICK STREQUAL "ON")
-  ${people_msgs_INCLUDE_DIRS}
-endif
   ${tf2_geometry_msgs_INCLUDE_DIRS}
+  ${tf2_msgs_INCLUDE_DIRS}
   ${trajectory_msgs_INCLUDE_DIRS}
   ${visualization_msgs_INCLUDE_DIRS}
   ${pcl_conversions_INCLUDE_DIRS}
@@ -101,14 +106,13 @@ ament_target_dependencies(${libgrasp_detect}
   "grasp_msgs"
   "sensor_msgs"
   "moveit_msgs"
-if(BUILD_RECOGNIZE_PICK STREQUAL "ON")
-  "people_msgs"
-endif()
   "visualization_msgs")
 target_link_libraries(${libgrasp_detect}
   ${gpg_LIBRARIES}
   ${gpd_LIBRARIES}
   ${PCL_LIBRARIES}
+  ${OpenCV_LIBRARIES}
+  ${VTK_LIBRARIES}
 )
 rclcpp_components_register_nodes(${libgrasp_detect} "grasp_ros2::GraspDetectorGPD")
 set(node_plugins "${node_plugins}grasp_ros2::GraspDetectorGPD;$<TARGET_FILE:${libgrasp_detect}>\n")
@@ -129,9 +133,13 @@ ament_target_dependencies(${libgrasp_plan}
   "moveit_msgs"
   "tf2"
   "tf2_ros"
+  "tf2_msgs"
   "tf2_geometry_msgs"
   "trajectory_msgs")
 target_link_libraries(${libgrasp_plan}
+  ${PCL_LIBRARIES}
+  ${OpenCV_LIBRARIES}
+  ${VTK_LIBRARIES}
 )
 rclcpp_components_register_nodes(${libgrasp_plan} "grasp_ros2::GraspPlanner")
 set(node_plugins "${node_plugins}grasp_ros2::GraspPlanner;$<TARGET_FILE:${libgrasp_plan}>\n")
@@ -159,6 +167,8 @@ target_link_libraries(${PROJECT_NAME}
   ${gpg_LIBRARIES}
   ${gpd_LIBRARIES}
   ${PCL_LIBRARIES}
+  ${OpenCV_LIBRARIES}
+  ${VTK_LIBRARIES}
   ${libgrasp_detect}
   ${libgrasp_plan}
 )

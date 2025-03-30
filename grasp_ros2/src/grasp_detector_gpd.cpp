@@ -23,24 +23,54 @@
 #include <vector>
 #include "grasp_library/ros2/grasp_detector_gpd.hpp"
 #include "grasp_library/ros2/ros_params.hpp"
+#include <gpd/util/cloud.h>
 
 namespace grasp_ros2
 {
 
 GraspDetectorGPD::GraspDetectorGPD(const rclcpp::NodeOptions & options)
-: Node("GraspDetectorGPD", options),
-  GraspDetectorBase(), cloud_camera_(NULL), has_cloud_(false), frame_(""),
+: GraspDetectorBase(),
+  cloud_camera_(nullptr),
+  has_cloud_(false),
+  frame_(""),
 #ifdef RECOGNIZE_PICK
   object_msg_(nullptr), object_sub_(nullptr),
 #endif
-  filtered_pub_(nullptr), grasps_rviz_pub_(nullptr)
+  filtered_pub_(nullptr), grasps_rviz_pub_(nullptr),
+  Node("grasp_detector_gpd", options)
+{
+  // Get config file path
+  std::string config_file = ROSParameters::getDetectionParams(this);
+  if (config_file.empty()) {
+    RCLCPP_ERROR(get_logger(), "Failed to create GPD config file");
+    return;
+  }
+
+  // Initialize detector with config file
+  config_file_ = config_file;
+  hand_geometry_ = gpd::candidate::HandGeometry(config_file);
+  try {
+    grasp_detector_ = std::make_unique<gpd::GraspDetector>(std::string("/home/noahspector/temp/gpd/cfg/eigen_params.cfg"));
+    if (!grasp_detector_) {
+      RCLCPP_ERROR(get_logger(), "Failed to initialize GPD detector");
+      return;
+    }
+  } catch (const std::exception& e) {
+    RCLCPP_ERROR(get_logger(), "Error initializing GPD detector: %s", e.what());
+    return;
+  }
+  // Initialize ROS components
+  initializeROSComponents();
+}
+
+void GraspDetectorGPD::initializeROSComponents()
 {
   std::vector<double> camera_position;
   this->get_parameter_or("camera_position", camera_position,
     std::vector<double>(std::initializer_list<double>({0, 0, 0})));
   view_point_ << camera_position[0], camera_position[1], camera_position[2];
   this->get_parameter_or("auto_mode", auto_mode_, true);
-  std::string cloud_topic, grasp_topic, rviz_topic, tabletop_topic, object_topic;
+  std::string cloud_topic, object_topic;
   this->get_parameter_or("cloud_topic", cloud_topic,
     std::string(Consts::kTopicPointCloud2));
   bool rviz, object_detect;
@@ -49,7 +79,7 @@ GraspDetectorGPD::GraspDetectorGPD(const rclcpp::NodeOptions & options)
   this->get_parameter_or("object_detect", object_detect, false);
 
   callback_group_subscriber1_ = this->create_callback_group(
-    rclcpp::callback_group::CallbackGroupType::MutuallyExclusive);
+    rclcpp::CallbackGroupType::MutuallyExclusive);
   auto sub1_opt = rclcpp::SubscriptionOptions();
   sub1_opt.callback_group = callback_group_subscriber1_;
 
@@ -71,7 +101,7 @@ GraspDetectorGPD::GraspDetectorGPD(const rclcpp::NodeOptions & options)
 #ifdef RECOGNIZE_PICK
   if (object_detect) {
     callback_group_subscriber2_ = this->create_callback_group(
-      rclcpp::callback_group::CallbackGroupType::MutuallyExclusive);
+      rclcpp::CallbackGroupType::MutuallyExclusive);
     auto sub2_opt = rclcpp::SubscriptionOptions();
     sub2_opt.callback_group = callback_group_subscriber2_;
 
@@ -85,10 +115,7 @@ GraspDetectorGPD::GraspDetectorGPD(const rclcpp::NodeOptions & options)
         rclcpp::QoS(10), callback, sub2_opt);
   }
 #endif
-  // GraspDetector::GraspDetectionParameters detection_param;
-  ROSParameters::getDetectionParams(this, detection_param_);
-  grasp_detector_ = std::make_shared<GraspDetector>(detection_param_);
-  RCLCPP_INFO(logger_, "ROS2 Grasp Library node up...");
+  RCLCPP_INFO(get_logger(), "ROS2 Grasp Library node up...");
 
   detector_thread_ = new std::thread(&GraspDetectorGPD::onInit, this);
   detector_thread_->detach();
@@ -102,13 +129,15 @@ void GraspDetectorGPD::onInit()
   while (rclcpp::ok()) {
     if (has_cloud_) {
       // detect grasps in point cloud
-      std::vector<Grasp> grasps = detectGraspPosesInTopic();
+      std::vector<std::unique_ptr<gpd::candidate::Hand>> grasps = detectGraspPosesInTopic();
       // visualize grasps in rviz
       if (grasps_rviz_pub_) {
-        const HandSearch::Parameters & params = grasp_detector_->getHandSearchParameters();
-        grasps_rviz_pub_->publish(convertToVisualGraspMsg(grasps, params.hand_outer_diameter_,
-          params.hand_depth_,
-          params.finger_width_, params.hand_height_, frame_));
+        // Get hand geometry parameters
+        if (grasps.size() > 0) {
+          grasps_rviz_pub_->publish(convertToVisualGraspMsg(grasps, 
+              hand_geometry_.outer_diameter_, hand_geometry_.depth_,
+              hand_geometry_.finger_width_, hand_geometry_.height_, frame_));
+        }
       }
 
       // reset the system
@@ -121,26 +150,53 @@ void GraspDetectorGPD::onInit()
   }
 }
 
-std::vector<Grasp> GraspDetectorGPD::detectGraspPosesInTopic()
+std::vector<std::unique_ptr<gpd::candidate::Hand>> GraspDetectorGPD::detectGraspPosesInTopic()
 {
   // detect grasp poses
-  std::vector<Grasp> grasps;
+  std::vector<std::unique_ptr<gpd::candidate::Hand>> grasps;
 
-  {
-    // preprocess the point cloud
-    grasp_detector_->preprocessPointCloud(*cloud_camera_);
-    // detect grasps in the point cloud
-    grasps = grasp_detector_->detectGrasps(*cloud_camera_);
-  }
+  try {
+    if (!grasp_detector_) {
+      RCLCPP_ERROR(logger_, "GPD detector not initialized");
+      return grasps;
+    }
 
-  // Publish the selected grasps.
-  grasp_msgs::msg::GraspConfigList selected_grasps_msg = createGraspListMsg(grasps);
-  if (grasp_cb_) {
-    grasp_cb_->grasp_callback(
-      std::make_shared<grasp_msgs::msg::GraspConfigList>(selected_grasps_msg));
+    if (!cloud_camera_) {
+      RCLCPP_ERROR(logger_, "No point cloud data available");
+      return grasps;
+    }
+
+    // preprocess the point cloud with error handling
+    try {
+      grasp_detector_->preprocessPointCloud(*cloud_camera_);
+    } catch (const std::exception& e) {
+      RCLCPP_ERROR(logger_, "Error preprocessing point cloud: %s", e.what());
+      return grasps;
+    }
+
+    // detect grasps in the point cloud with error handling
+    try {
+      grasps = grasp_detector_->detectGrasps(*cloud_camera_);
+    } catch (const std::exception& e) {
+      RCLCPP_ERROR(logger_, "Error detecting grasps: %s", e.what());
+      return grasps;
+    }
+
+    // Publish the selected grasps.
+    if (!grasps.empty()) {
+      grasp_msgs::msg::GraspConfigList selected_grasps_msg = createGraspListMsg(grasps);
+      if (grasp_cb_) {
+        grasp_cb_->grasp_callback(
+          std::make_shared<grasp_msgs::msg::GraspConfigList>(selected_grasps_msg));
+      }
+      grasps_pub_->publish(selected_grasps_msg);
+      RCLCPP_INFO(logger_, "Published %zu highest-scoring grasps.", selected_grasps_msg.grasps.size());
+    } else {
+      RCLCPP_WARN(logger_, "No valid grasps detected");
+    }
+  } catch (const std::exception& e) {
+    RCLCPP_ERROR(logger_, "Error in grasp detection pipeline: %s", e.what());
   }
-  grasps_pub_->publish(selected_grasps_msg);
-  RCLCPP_INFO(logger_, "Published %d highest-scoring grasps.", selected_grasps_msg.grasps.size());
 
   return grasps;
 }
@@ -163,10 +219,10 @@ void GraspDetectorGPD::cloud_callback(const sensor_msgs::msg::PointCloud2::Share
     }
   }
 #endif
-  RCLCPP_DEBUG(logger_, "PCD callback...");
+  RCLCPP_DEBUG(get_logger(), "PCD callback...");
   if (!has_cloud_) {
     delete cloud_camera_;
-    cloud_camera_ = NULL;
+    cloud_camera_ = nullptr;
     Eigen::Matrix3Xd view_points(3, 1);
     view_points.col(0) = view_point_;
 
@@ -176,22 +232,24 @@ void GraspDetectorGPD::cloud_callback(const sensor_msgs::msg::PointCloud2::Share
     {
       PointCloudPointNormal::Ptr cloud(new PointCloudPointNormal);
       pcl::fromROSMsg(*msg, *cloud);
-      cloud_camera_ = new CloudCamera(cloud, 0, view_points);
+      cloud_camera_ = new gpd::util::Cloud(cloud, 0, view_points);
       cloud_camera_header_ = msg->header;
     } else {
       PointCloudRGBA::Ptr cloud(new PointCloudRGBA);
       pcl::fromROSMsg(*msg, *cloud);
 
       // filter workspace
+      // Use hand geometry parameters for workspace filtering
+      // Define default workspace if not set
+      std::vector<double> workspace = {-1.0, 1.0, -1.0, 1.0, -1.0, 1.0};
+
       for (uint32_t i = 0; i < cloud->size(); i++) {
-        if (cloud->points[i].x > detection_param_.workspace_[0] && cloud->points[i].x < detection_param_.workspace_[1] &&
-            cloud->points[i].y > detection_param_.workspace_[2] && cloud->points[i].y < detection_param_.workspace_[3] &&
-            cloud->points[i].z > detection_param_.workspace_[4] && cloud->points[i].z < detection_param_.workspace_[5]) {
+        if (cloud->points[i].x > workspace[0] && cloud->points[i].x < workspace[1] &&
+            cloud->points[i].y > workspace[2] && cloud->points[i].y < workspace[3] &&
+            cloud->points[i].z > workspace[4] && cloud->points[i].z < workspace[5]) {
           continue;
         } else {
           cloud->points[i].x = std::numeric_limits<float>::quiet_NaN();
-          cloud->points[i].y = std::numeric_limits<float>::quiet_NaN();
-          cloud->points[i].z = std::numeric_limits<float>::quiet_NaN();
         }
       }
 
@@ -262,10 +320,10 @@ void GraspDetectorGPD::cloud_callback(const sensor_msgs::msg::PointCloud2::Share
         msg2.fields[3].datatype = 7;
         filtered_pub_->publish(msg2);
       }
-      cloud_camera_ = new CloudCamera(cloud, 0, view_points);
+      cloud_camera_ = new gpd::util::Cloud(cloud, 0, view_points);
       cloud_camera_header_ = msg->header;
     }
-    RCLCPP_INFO(logger_, "Received cloud with %d points and normals.",
+    RCLCPP_INFO(logger_, "Received cloud with %zu points and normals.",
       cloud_camera_->getCloudProcessed()->size());
 
     has_cloud_ = true;
@@ -296,12 +354,12 @@ void GraspDetectorGPD::object_callback(const people_msgs::msg::ObjectsInMasks::S
 }
 #endif
 grasp_msgs::msg::GraspConfigList GraspDetectorGPD::createGraspListMsg(
-  const std::vector<Grasp> & hands)
+  const std::vector<std::unique_ptr<gpd::candidate::Hand>> & hands)
 {
   grasp_msgs::msg::GraspConfigList msg;
 
   for (uint32_t i = 0; i < hands.size(); i++) {
-    msg.grasps.push_back(convertToGraspMsg(hands[i]));
+    msg.grasps.push_back(convertToGraspMsg(*hands[i]));
   }
 
   msg.header = cloud_camera_header_;
@@ -310,12 +368,12 @@ grasp_msgs::msg::GraspConfigList GraspDetectorGPD::createGraspListMsg(
   return msg;
 }
 
-grasp_msgs::msg::GraspConfig GraspDetectorGPD::convertToGraspMsg(const Grasp & hand)
+grasp_msgs::msg::GraspConfig GraspDetectorGPD::convertToGraspMsg(const gpd::candidate::Hand & hand)
 {
   grasp_msgs::msg::GraspConfig msg;
-  pointEigenToMsg(hand.getGraspBottom(), msg.bottom);
-  pointEigenToMsg(hand.getGraspTop(), msg.top);
-  pointEigenToMsg(hand.getGraspSurface(), msg.surface);
+  pointEigenToMsg(hand.getPosition(), msg.bottom);
+  pointEigenToMsg(hand.getPosition() + hand.getApproach() * hand_geometry_.depth_, msg.top);
+  pointEigenToMsg(hand.getPosition() + hand.getApproach() * 0.5 * hand_geometry_.depth_, msg.surface);
   vectorEigenToMsg(hand.getApproach(), msg.approach);
   vectorEigenToMsg(hand.getBinormal(), msg.binormal);
   vectorEigenToMsg(hand.getAxis(), msg.axis);
@@ -327,7 +385,7 @@ grasp_msgs::msg::GraspConfig GraspDetectorGPD::convertToGraspMsg(const Grasp & h
 }
 
 visualization_msgs::msg::MarkerArray GraspDetectorGPD::convertToVisualGraspMsg(
-  const std::vector<Grasp> & hands,
+  const std::vector<std::unique_ptr<gpd::candidate::Hand>> & hands,
   double outer_diameter, double hand_depth, double finger_width, double hand_height,
   const std::string & frame_id)
 {
@@ -341,23 +399,23 @@ visualization_msgs::msg::MarkerArray GraspDetectorGPD::convertToVisualGraspMsg(
     base_center;
 
   for (uint32_t i = 0; i < hands.size(); i++) {
-    left_bottom = hands[i].getGraspBottom() - (hw - 0.5 * finger_width) * hands[i].getBinormal();
-    right_bottom = hands[i].getGraspBottom() + (hw - 0.5 * finger_width) * hands[i].getBinormal();
-    left_top = left_bottom + hand_depth * hands[i].getApproach();
-    right_top = right_bottom + hand_depth * hands[i].getApproach();
+    left_bottom = hands[i]->getPosition() - (hw - 0.5 * finger_width) * hands[i]->getBinormal();
+    right_bottom = hands[i]->getPosition() + (hw - 0.5 * finger_width) * hands[i]->getBinormal();
+    left_top = left_bottom + hand_depth * hands[i]->getApproach();
+    right_top = right_bottom + hand_depth * hands[i]->getApproach();
     left_center = left_bottom + 0.5 * (left_top - left_bottom);
     right_center = right_bottom + 0.5 * (right_top - right_bottom);
-    base_center = left_bottom + 0.5 * (right_bottom - left_bottom) - 0.01 * hands[i].getApproach();
-    approach_center = base_center - 0.04 * hands[i].getApproach();
+    base_center = left_bottom + 0.5 * (right_bottom - left_bottom) - 0.01 * hands[i]->getApproach();
+    approach_center = base_center - 0.04 * hands[i]->getApproach();
 
     base = createHandBaseMarker(left_bottom, right_bottom,
-        hands[i].getFrame(), 0.02, hand_height, i, frame_id);
+        hands[i]->getFrame(), 0.02, hand_height, i, frame_id);
     left_finger = createFingerMarker(left_center,
-        hands[i].getFrame(), hand_depth, finger_width, hand_height, i * 3, frame_id);
+        hands[i]->getFrame(), hand_depth, finger_width, hand_height, i * 3, frame_id);
     right_finger = createFingerMarker(right_center,
-        hands[i].getFrame(), hand_depth, finger_width, hand_height, i * 3 + 1, frame_id);
+        hands[i]->getFrame(), hand_depth, finger_width, hand_height, i * 3 + 1, frame_id);
     approach = createFingerMarker(approach_center,
-        hands[i].getFrame(), 0.08, finger_width, hand_height, i * 3 + 2, frame_id);
+        hands[i]->getFrame(), 0.08, finger_width, hand_height, i * 3 + 2, frame_id);
 
     marker_array.markers.push_back(left_finger);
     marker_array.markers.push_back(right_finger);
@@ -442,6 +500,15 @@ visualization_msgs::msg::Marker GraspDetectorGPD::createHandBaseMarker(
   marker.color.b = 1.0;
 
   return marker;
+}
+
+bool GraspDetectorGPD::isDetectorValid() const
+{
+  if (!grasp_detector_) {
+    RCLCPP_ERROR(logger_, "GPD detector not initialized");
+    return false;
+  }
+  return true;
 }
 
 }  // namespace grasp_ros2

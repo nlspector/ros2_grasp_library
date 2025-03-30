@@ -17,7 +17,7 @@
 namespace grasp_ros2
 {
 
-const char Consts::kTopicPointCloud2[] = "/camera/pointcloud";
+const char Consts::kTopicPointCloud2[] = "/segmenter/segmented_pointcloud";
 const char Consts::kTopicDetectedObjects[] = "/ros2_openvino_toolkit/segmented_obejcts";
 const char Consts::kTopicDetectedGrasps[] = "/grasp_library/clustered_grasps";
 const char Consts::kTopicVisualGrasps[] = "/grasp_library/grasps_rviz";

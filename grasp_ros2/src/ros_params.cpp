@@ -20,79 +20,157 @@
 namespace grasp_ros2
 {
 
-void ROSParameters::getDetectionParams(
-  rclcpp::Node * node,
-  GraspDetector::GraspDetectionParameters & param)
+std::string ROSParameters::getDetectionParams(rclcpp::Node * node)
 {
+  // Create a temporary file to store the configuration
+  char temp_dir[] = "/tmp/gpd_config_XXXXXX";
+  char* dir_name = mkdtemp(temp_dir);
+  if (dir_name == nullptr) {
+    RCLCPP_ERROR(node->get_logger(), "Failed to create temporary directory for GPD config");
+    return "";
+  }
+  
+  std::string config_file_path = std::string(dir_name) + "/gpd_config.yaml";
+  std::ofstream config_file(config_file_path);
+  
+  if (!config_file.is_open()) {
+    RCLCPP_ERROR(node->get_logger(), "Failed to create GPD config file at %s", config_file_path.c_str());
+    return "";
+  }
+  
   // Read hand geometry parameters.
-  node->get_parameter_or("finger_width", param.hand_search_params.finger_width_, 0.005);
-  node->get_parameter_or("hand_outer_diameter", param.hand_search_params.hand_outer_diameter_,
-    0.12);
-  node->get_parameter_or("hand_depth", param.hand_search_params.hand_depth_, 0.06);
-  node->get_parameter_or("hand_height", param.hand_search_params.hand_height_, 0.02);
-  node->get_parameter_or("init_bite", param.hand_search_params.init_bite_, 0.01);
-
+  double finger_width, hand_outer_diameter, hand_depth, hand_height, init_bite;
+  node->get_parameter_or("finger_width", finger_width, 0.005);
+  node->get_parameter_or("hand_outer_diameter", hand_outer_diameter, 0.12);
+  node->get_parameter_or("hand_depth", hand_depth, 0.06);
+  node->get_parameter_or("hand_height", hand_height, 0.02);
+  node->get_parameter_or("init_bite", init_bite, 0.01);
+  
   // Read local hand search parameters.
-  node->get_parameter_or("nn_radius", param.hand_search_params.nn_radius_frames_, 0.01);
-  node->get_parameter_or("num_orientations", param.hand_search_params.num_orientations_, 8);
-  node->get_parameter_or("num_samples", param.hand_search_params.num_samples_, 100);
-  node->get_parameter_or("num_threads", param.hand_search_params.num_threads_, 4);
-  node->get_parameter_or("rotation_axis", param.hand_search_params.rotation_axis_, 2);
-
+  double nn_radius;
+  int num_orientations, num_samples, num_threads, rotation_axis;
+  node->get_parameter_or("nn_radius", nn_radius, 0.01);
+  node->get_parameter_or("num_orientations", num_orientations, 8);
+  node->get_parameter_or("num_samples", num_samples, 100);
+  node->get_parameter_or("num_threads", num_threads, 4);
+  node->get_parameter_or("rotation_axis", rotation_axis, 2);
+  
   // Read plotting parameters.
-  node->get_parameter_or("plot_samples", param.plot_samples_, false);
-  node->get_parameter_or("plot_normals", param.plot_normals_, false);
-  param.generator_params.plot_normals_ = param.plot_normals_;
-  node->get_parameter_or("plot_filtered_grasps", param.plot_filtered_grasps_, false);
-  node->get_parameter_or("plot_valid_grasps", param.plot_valid_grasps_, false);
-  node->get_parameter_or("plot_clusters", param.plot_clusters_, false);
-  node->get_parameter_or("plot_selected_grasps", param.plot_selected_grasps_, false);
-
-  // Read general parameters.
-  param.generator_params.num_samples_ = param.hand_search_params.num_samples_;
-  param.generator_params.num_threads_ = param.hand_search_params.num_threads_;
-  node->get_parameter_or("plot_candidates", param.generator_params.plot_grasps_, false);
-
+  bool plot_samples, plot_normals, plot_filtered_grasps, plot_valid_grasps;
+  bool plot_clusters, plot_selected_grasps, plot_candidates;
+  node->get_parameter_or("plot_samples", plot_samples, false);
+  node->get_parameter_or("plot_normals", plot_normals, false);
+  node->get_parameter_or("plot_filtered_grasps", plot_filtered_grasps, false);
+  node->get_parameter_or("plot_valid_grasps", plot_valid_grasps, true);
+  node->get_parameter_or("plot_clusters", plot_clusters, false);
+  node->get_parameter_or("plot_selected_grasps", plot_selected_grasps, false);
+  node->get_parameter_or("plot_candidates", plot_candidates, false);
+  
   // Read preprocessing parameters.
-  node->get_parameter_or("remove_outliers", param.generator_params.remove_statistical_outliers_,
-    false);
-  node->get_parameter_or("voxelize", param.generator_params.voxelize_, true);
-  node->get_parameter_or("workspace", param.generator_params.workspace_,
+  bool remove_outliers, voxelize;
+  std::vector<double> workspace;
+  node->get_parameter_or("remove_outliers", remove_outliers, false);
+  node->get_parameter_or("voxelize", voxelize, true);
+  node->get_parameter_or("workspace", workspace,
     std::vector<double>(std::initializer_list<double>({-1.0, 1.0, -1.0, 1.0, -1.0, 1.0})));
-  param.workspace_ = param.generator_params.workspace_;
-
+  
   // Read classification parameters and create classifier.
-  node->get_parameter_or("model_file", param.model_file_, std::string(""));
-  node->get_parameter_or("trained_file", param.weights_file_, std::string(""));
-  node->get_parameter_or("min_score_diff", param.min_score_diff_, 500.0);
-  node->get_parameter_or("create_image_batches", param.create_image_batches_, false);
-  node->get_parameter_or("device", param.device_, 0);
-
+  std::string model_file, weights_file;
+  double min_score_diff;
+  bool create_image_batches;
+  int device;
+  node->get_parameter_or("trained_file", weights_file, std::string("/home/noahspector/ws_moveit/src/ros2_grasp_library/gpd/lenet/15channels/params/"));
+  node->get_parameter_or("min_score_diff", min_score_diff, 500.0);
+  node->get_parameter_or("create_image_batches", create_image_batches, false);
+  node->get_parameter_or("device", device, 0);
+  
   // Read grasp image parameters.
-  node->get_parameter_or("image_outer_diameter", param.image_params.outer_diameter_,
-    param.hand_search_params.hand_outer_diameter_);
-  node->get_parameter_or("image_depth", param.image_params.depth_,
-    param.hand_search_params.hand_depth_);
-  node->get_parameter_or("image_height", param.image_params.height_,
-    param.hand_search_params.hand_height_);
-  node->get_parameter_or("image_size", param.image_params.size_, 60);
-  node->get_parameter_or("image_num_channels", param.image_params.num_channels_, 15);
-
+  int image_size, image_num_channels;
+  node->get_parameter_or("image_size", image_size, 60);
+  node->get_parameter_or("image_num_channels", image_num_channels, 15);
+  
   // Read learning parameters.
-  node->get_parameter_or("remove_plane_before_image_calculation", param.remove_plane_, false);
-
+  bool remove_plane;
+  node->get_parameter_or("remove_plane_before_image_calculation", remove_plane, false);
+  
   // Read grasp filtering parameters
-  node->get_parameter_or("filter_grasps", param.filter_grasps_, false);
-  node->get_parameter_or("filter_half_antipodal", param.filter_half_antipodal_, false);
-  param.gripper_width_range_.push_back(0.03);
-  param.gripper_width_range_.push_back(0.10);
-  // node->get_parameter("gripper_width_range", param.gripper_width_range_);
-
+  bool filter_grasps, filter_half_antipodal;
+  node->get_parameter_or("filter_grasps", filter_grasps, false);
+  node->get_parameter_or("filter_half_antipodal", filter_half_antipodal, false);
+  std::vector<double> gripper_width_range = {0.03, 0.10};
+  
   // Read clustering parameters
-  node->get_parameter_or("min_inliers", param.min_inliers_, 1);
-
-  // Read grasp selection parameters
-  node->get_parameter_or("num_selected", param.num_selected_, 5);
+  int min_inliers, num_selected;
+  node->get_parameter_or("min_inliers", min_inliers, 1);
+  node->get_parameter_or("num_selected", num_selected, 5);
+  
+  // Write parameters to the config file in YAML format
+  config_file << "# GPD Configuration File (Auto-generated)\n\n";
+  
+  // Hand geometry section
+  config_file << "# Hand geometry parameters\n";
+  config_file << "finger_width = " << finger_width << "  # finger width in meters\n";
+  config_file << "hand_outer_diameter = " << hand_outer_diameter << "  # hand outer diameter in meters\n";
+  config_file << "hand_depth = " << hand_depth << "  # hand depth in meters\n";
+  config_file << "hand_height = " << hand_height << "  # hand height in meters\n";
+  config_file << "init_bite = " << init_bite << "  # approach distance in meters\n\n";
+  
+  // Hand search parameters
+  config_file << "# Local hand search parameters\n";
+  config_file << "nn_radius = " << nn_radius << "  # radius for nearest neighbors search\n";
+  config_file << "num_orientations = " << num_orientations << "  # number of hand orientations\n";
+  config_file << "num_samples = " << num_samples << "  # number of samples\n";
+  config_file << "num_threads = " << num_threads << "  # number of CPU threads\n";
+  config_file << "rotation_axis = " << rotation_axis << "  # axis of rotation for hand orientations\n\n";
+  
+  // Plotting parameters
+  config_file << "# Visualization parameters\n";
+  config_file << "plot_samples = " << (plot_samples ? "true" : "false") << "\n";
+  config_file << "plot_normals = " << (plot_normals ? "true" : "false") << "\n";
+  config_file << "plot_filtered_grasps = " << (plot_filtered_grasps ? "true" : "false") << "\n";
+  config_file << "plot_valid_grasps = " << (plot_valid_grasps ? "true" : "false") << "\n";
+  config_file << "plot_clusters = " << (plot_clusters ? "true" : "false") << "\n";
+  config_file << "plot_selected_grasps = " << (plot_selected_grasps ? "true" : "false") << "\n";
+  config_file << "plot_candidates = " << (plot_candidates ? "true" : "false") << "\n\n";
+  
+  // Preprocessing parameters
+  config_file << "# Preprocessing parameters\n";
+  config_file << "remove_outliers = " << (remove_outliers ? "true" : "false") << "\n";
+  config_file << "voxelize = " << (voxelize ? "true" : "false") << "\n";
+  config_file << "workspace = [";
+  for (size_t i =  0; i < workspace.size(); ++i) {
+    config_file << workspace[i];
+    if (i < workspace.size() - 1) {
+      config_file << ", ";
+    }
+  }
+  config_file << "]  # [minX, maxX, minY, maxY, minZ, maxZ]\n\n";
+  
+  // Classification parameters
+  config_file << "# Classification parameters\n";
+  config_file << "weights_file = " << weights_file << "  # path to weights file\n";
+  config_file << "min_score_diff = " << min_score_diff << "  # minimum score difference\n";
+  config_file << "create_image_batches = " << (create_image_batches ? "true" : "false") << "  # create image batches\n";
+  config_file << "device = " << device << "  # device ID for GPU\n\n";
+  
+  // Image parameters
+  config_file << "# Image parameters\n";
+  config_file << "image_size = " << image_size << "  # size of the image (width and height)\n";
+  config_file << "image_num_channels = " << image_num_channels << "  # number of image channels\n\n";
+  
+  // Filtering parameters
+  config_file << "# Filtering parameters\n";
+  config_file << "filter_grasps = " << (filter_grasps ? "true" : "false") << "\n";
+  config_file << "filter_half_antipodal = " << (filter_half_antipodal ? "true" : "false") << "\n";
+  config_file << "gripper_width_range = [" << gripper_width_range[0] << ", " << gripper_width_range[1] << "]  # [min, max] gripper width in meters\n";
+  config_file << "min_inliers = " << min_inliers << "  # minimum number of inliers for clustering\n";
+  config_file << "num_selected = " << num_selected << "  # number of selected grasps\n\n";
+  
+  // Close the file and return the path
+  config_file.close();
+  
+  RCLCPP_INFO(node->get_logger(), "Created GPD config file at %s", config_file_path.c_str());
+  return config_file_path;
 }
 
 void ROSParameters::getPlanningParams(

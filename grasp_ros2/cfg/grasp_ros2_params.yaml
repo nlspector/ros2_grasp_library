@@ -1,27 +1,67 @@
-GraspDetectorGPD:
+grasp_detector_gpd:
   ros__parameters:
-    cloud_topic: /camera/pointcloud
+    # Point cloud input
+    #cloud_topic: /camera/camera/depth/color/points
     #cloud_topic: /mechmind/color_point_cloud
     rviz: true
-    device: 0 # 0:CPU, 1:GPU, 2:VPU
-    auto_mode: true
-    plane_remove: true
-    # grasp workspace in camera frames
-    workspace: [-0.21, 0.29, -0.22, 0.15, 0.0, 1.0] # Realsense
-    #workspace: [-0.16, 0.34, -0.26, 0.14, 1.4, 1.8] # Mechmind
-    # gripper geometry parameters in metre
-    # finger_width: the finger thickness
-    # hand_outer_diameter: the maximum robot hand aperture 
-    # hand_depth: the hand depth (the finger length)
-    # hand_height: the finger breadth
+    device: 0  # 0:CPU, 1:GPU, 2:VPU
+    #auto_mode: true
+    # plane_remove: true
+
+    # Workspace parameters (in camera frames)
+    workspace: [-0.21, 0.29, -0.22, 0.15, 0.0, 1.0]  # Realsense
+    #workspace: [-0.16, 0.34, -0.26, 0.14, 1.4, 1.8]  # Mechmind
+
+    # Hand geometry parameters
     finger_width: 0.005
-    hand_outer_diameter: 0.100
-    hand_depth: 0.038
-    hand_height: 0.020
+    hand_outer_diameter: 0.12
+    hand_depth: 0.06
+    hand_height: 0.02
+    init_bite: 0.01
+
+    # Local hand search parameters
+    nn_radius: 0.01
+    num_orientations: 8
+    num_samples: 300  # Reduced from default 1000
+    num_threads: 4    # Increased from default 1
+    rotation_axis: 2
+
+    # Classification parameters
+    model_file: "/home/noahspector/ws_moveit/src/ros2_grasp_library/gpd/caffe/15channels/lenet_15_channels.prototxt"
+    trained_file: "/home/noahspector/ws_moveit/src/ros2_grasp_library/gpd/lenet/15channels/params/"
+    min_score_diff: 50.0  # Reduced threshold for testing
+    create_image_batches: true
+    device: 0  # CPU
+
+    # Preprocessing parameters
+    remove_outliers: false
+    voxelize: true
+    voxel_size: 0.005
+    workspace: [-1.0, 1.0, -1.0, 1.0, -1.0, 1.0]
+
+    # Image parameters
+    image_size: 60
+    image_num_channels: 15
+
+    # Filtering parameters
+    filter_grasps: true
+    filter_half_antipodal: false
+    gripper_width_range: [0.03, 0.085]  # Adjusted for your gripper
+    min_inliers: 1
+    num_selected: 5
+
+    # Visualization
+    plot_samples: false
+    plot_normals: false
+    plot_filtered_grasps: false
+    plot_valid_grasps: true
+    plot_clusters: false
+    plot_selected_grasps: true
+    plot_candidates: false
 GraspPlanner:
   ros__parameters:
     grasp_score_threshold: 20
-    grasp_frame_id: "camera_color_optical_frame" # Realsense
+    grasp_frame_id: "camera_rgbd_optical_frame" # Realsense
     #grasp_frame_id: "mechmind_camera" # Mechmind
     grasp_offset: [0.000, 0.000, 0.0]
     eef_offset: 0.174

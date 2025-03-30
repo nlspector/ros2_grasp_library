@@ -39,18 +39,18 @@ GraspPlanner::GraspPlanner(const rclcpp::NodeOptions & options, GraspDetectorBas
 {
   ROSParameters::getPlanningParams(this, param_);
   callback_group_subscriber3_ = this->create_callback_group(
-    rclcpp::callback_group::CallbackGroupType::MutuallyExclusive);
+    rclcpp::CallbackGroupType::MutuallyExclusive);
   auto service = [this](const std::shared_ptr<rmw_request_id_t> request_header,
       const std::shared_ptr<GraspPlanning::Request> req,
       const std::shared_ptr<GraspPlanning::Response> res) -> void {
       this->grasp_service(request_header, req, res);
     };
-  grasp_srv_ = this->create_service<GraspPlanning>("plan_grasps", service, rmw_qos_profile_default,
+  grasp_srv_ = this->create_service<GraspPlanning>("plan_grasps", service, rclcpp::QoS(10),
       callback_group_subscriber3_);
 
   grasp_detector_->add_callback(this);
 
-  tfBuffer_ = new tf2_ros::Buffer(std::make_shared<rclcpp::Clock>(RCL_ROS_TIME));
+  tfBuffer_ = std::make_shared<tf2_ros::Buffer>(std::make_shared<rclcpp::Clock>(RCL_ROS_TIME));
   tfListener_ = std::make_shared<tf2_ros::TransformListener>(*tfBuffer_);
   RCLCPP_INFO(logger_, "ROS2 Grasp Planning Service up...");
 }
@@ -140,6 +140,7 @@ bool GraspPlanner::transform(
       tfBuffer_->transform(from_axis, to_axis, param_.grasp_frame_id_);
     } catch (tf2::TransformException & ex) {
       RCLCPP_WARN(logger_, "transform exception");
+      RCLCPP_WARN(logger_, "Exception details: %s", ex.what());
       rclcpp::Rate(1).sleep();
       continue;
     }
